@@ -41,6 +41,7 @@ app.use((req, res, next) => {
 // ==============================================================
 const SESSION_SECRET = process.env.SESSION_SECRET || 'district-judiciary-sessions-hmac-secret-key-2026';
 const VALID_ROLES = ['Advocate', 'Litigant', 'Judge', 'Clerk', 'Court Administrator'];
+const ALL_ROLES = VALID_ROLES;
 
 // Generate signed HMAC-SHA256 session token
 function createSessionToken(user) {
@@ -79,7 +80,8 @@ function verifySessionToken(token) {
     }
 }
 
-// Global authentication middleware
+// Global authentication middleware - Strict cryptographic token verification (REQ-03, P1)
+// Deleted spoofable header fallback: ONLY cryptographically signed HMAC-SHA256 session tokens set role
 function authenticateUser(req, res, next) {
     let authHeader = req.headers['authorization'] || req.headers['x-auth-token'];
     let token = null;
@@ -95,19 +97,6 @@ function authenticateUser(req, res, next) {
             name: verified.name,
             email: verified.email,
             authenticated: true
-        };
-        return next();
-    }
-
-    // Support backward-compatible test simulation headers ONLY if explicitly provided and strictly validated
-    const headerRole = req.headers['x-user-role'] ? req.headers['x-user-role'].trim() : null;
-    const headerUserId = req.headers['x-user-id'] ? parseInt(req.headers['x-user-id'], 10) : null;
-
-    if (headerRole && VALID_ROLES.includes(headerRole)) {
-        req.user = {
-            role: headerRole,
-            userId: headerUserId || null,
-            authenticated: false
         };
     } else {
         req.user = {
@@ -219,16 +208,11 @@ app.post('/api/auth/login', async (req, res) => {
         const md5Pass = crypto.createHash('md5').update(password).digest('hex');
         // 2. Seeded 64-char double MD5 with salt (Lab 9 Page 37): md5(password) + md5('salt' + password)
         const seededPass = md5Pass + crypto.createHash('md5').update('salt' + password).digest('hex');
-        // 3. Seeded user ID based hash (Lab 9 Page 37: md5(i::text) || md5('salt' || i::text))
-        const idStr = String(user.user_id);
-        const seededIdHash = crypto.createHash('md5').update(idStr).digest('hex') + crypto.createHash('md5').update('salt' + idStr).digest('hex');
 
+        // Strict hash matching only (REQ-03): Deleted loose backdoor string comparisons
         const isValidPassword = 
             (user.password_hash === md5Pass) ||
-            (user.password_hash === seededPass) ||
-            (user.password_hash === seededIdHash && (password === idStr || password === 'Court@2026')) ||
-            (password === 'Court@2026') ||
-            (password === idStr);
+            (user.password_hash === seededPass);
 
         // Explicitly block passing stored hash itself as password
         if (!isValidPassword) {
@@ -357,7 +341,7 @@ app.put('/api/admin/localization', requireRole(['Court Administrator']), async (
 // ==============================================================
 // 2. DASHBOARD & SYSTEM METRICS (Role-Tailored KPIs)
 // ==============================================================
-app.get('/api/stats', async (req, res) => {
+app.get('/api/stats', requireRole(ALL_ROLES), async (req, res) => {
     try {
         const { role: userRole, userId } = req.user;
 
@@ -476,10 +460,10 @@ app.get('/api/stats', async (req, res) => {
 // 3. TABLE 1: COURT_CASE (R7) - FULL CRUD & MULTI-PARAM SEARCH (REQ-02)
 // ==============================================================
 
-// READ CASES (with multi-parameter search & role filtering) (N13)
-app.get('/api/cases', async (req, res) => {
+// READ CASES (with multi-parameter search, case_type, filing_date & role filtering) (REQ-02, N13)
+app.get('/api/cases', requireRole(ALL_ROLES), async (req, res) => {
     try {
-        const { search, status, urgency, limit } = req.query;
+        const { search, status, urgency, case_type, filing_date_from, filing_date_to, limit } = req.query;
         const { role: userRole, userId } = req.user;
 
         let conditions = [];
@@ -520,6 +504,20 @@ app.get('/api/cases', async (req, res) => {
             params.push(urgency);
             conditions.push(`c.statutory_urgency = $${params.length}`);
         }
+        // Case Type Filter (REQ-02)
+        if (case_type && case_type !== 'ALL') {
+            params.push(case_type);
+            conditions.push(`c.case_type = $${params.length}`);
+        }
+        // Filing Date Range Filter (REQ-02)
+        if (filing_date_from && filing_date_from.trim()) {
+            params.push(filing_date_from.trim());
+            conditions.push(`c.filing_date >= $${params.length}::date`);
+        }
+        if (filing_date_to && filing_date_to.trim()) {
+            params.push(filing_date_to.trim());
+            conditions.push(`c.filing_date <= $${params.length}::date`);
+        }
 
         const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
         const rowLimit = parseInt(limit || '500', 10);
@@ -532,7 +530,7 @@ app.get('/api/cases', async (req, res) => {
 
         const sql = `
             SELECT DISTINCT c.cnr, c.standardized_filing_number, c.case_number, c.fir_number, 
-                   c.statutory_urgency, c.case_status, ${clerkSelect}
+                   c.statutory_urgency, c.case_status, c.filing_date, c.case_type, ${clerkSelect}
             FROM court_case c
             LEFT JOIN system_users u_clerk ON c.registered_by_clerk_id = u_clerk.user_id
             ${joinClause}
@@ -554,7 +552,7 @@ app.get('/api/cases', async (req, res) => {
 });
 
 // READ RELATIONAL DOSSIER (Joins R7, R8, R9, R11, R14, R15 with Bench Note Privacy) (N1, N13)
-app.get('/api/cases/:cnr/dossier', async (req, res) => {
+app.get('/api/cases/:cnr/dossier', requireRole(ALL_ROLES), async (req, res) => {
     const { cnr } = req.params;
     const { role: userRole, userId } = req.user;
 
@@ -631,9 +629,9 @@ app.get('/api/cases/:cnr/dossier', async (req, res) => {
     }
 });
 
-// CREATE (INSERT) COURT CASE (Clerk exclusive per SRS Matrix) (N12, N15)
+// CREATE (INSERT) COURT CASE (Clerk exclusive per SRS Matrix) (REQ-02, N12, N15)
 app.post('/api/cases', requireRole(['Clerk']), async (req, res) => {
-    const { cnr, filing_no, case_no, fir_no, urgency, status } = req.body;
+    const { cnr, filing_no, case_no, fir_no, urgency, status, filing_date, case_type } = req.body;
 
     if (!cnr || !filing_no || !case_no) {
         return res.status(400).json({
@@ -641,6 +639,10 @@ app.post('/api/cases', requireRole(['Clerk']), async (req, res) => {
             error: 'Mandatory fields missing: CNR, Standardized Filing No, and Case No are required.'
         });
     }
+
+    const validCaseTypes = ['Civil', 'Criminal', 'Family', 'Other'];
+    const selectedCaseType = case_type && validCaseTypes.includes(case_type) ? case_type : 'Civil';
+    const selectedFilingDate = filing_date && filing_date.trim() ? filing_date.trim() : new Date().toISOString().slice(0, 10);
 
     // Authenticated Clerk ID validation (N12: prevents spoofing and FK violations)
     let clerkIdToUse = req.user.userId || 301;
@@ -653,8 +655,9 @@ app.post('/api/cases', requireRole(['Clerk']), async (req, res) => {
         const sql = `
             INSERT INTO court_case (
                 cnr, standardized_filing_number, case_number, fir_number, 
-                statutory_urgency, case_status, registered_by_clerk_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                statutory_urgency, case_status, registered_by_clerk_id,
+                filing_date, case_type
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING *;
         `;
         const params = [
@@ -664,7 +667,9 @@ app.post('/api/cases', requireRole(['Clerk']), async (req, res) => {
             fir_no && fir_no.trim() ? fir_no.trim() : null,
             urgency || 'Normal',
             status || 'Filed',
-            clerkIdToUse
+            clerkIdToUse,
+            selectedFilingDate,
+            selectedCaseType
         ];
 
         const result = await query(sql, params);
@@ -807,7 +812,7 @@ app.delete('/api/cases/:cnr', requireRole(['Clerk']), async (req, res) => {
 // ==============================================================
 
 // READ HEARINGS (with 100% Parameterized Bench Note Privacy) (N1, N13)
-app.get('/api/hearings', async (req, res) => {
+app.get('/api/hearings', requireRole(ALL_ROLES), async (req, res) => {
     try {
         const { outcome, search, limit } = req.query;
         const { role: userRole, userId } = req.user;
@@ -986,7 +991,7 @@ app.put('/api/hearings/:cnr/:seq', requireRole(['Judge']), async (req, res) => {
 // ==============================================================
 
 // LIST CAUSE LISTS
-app.get('/api/causelists', async (req, res) => {
+app.get('/api/causelists', requireRole(ALL_ROLES), async (req, res) => {
     try {
         const sql = `
             SELECT cl.causelist_id, cl.list_date, cl.generated_by_clerk_id,
@@ -1119,7 +1124,7 @@ app.post('/api/causelists/generate', requireRole(['Clerk']), async (req, res) =>
 // ==============================================================
 
 // READ ORDERS
-app.get('/api/orders', async (req, res) => {
+app.get('/api/orders', requireRole(ALL_ROLES), async (req, res) => {
     try {
         const { type, publish_status, search, limit } = req.query;
         const { role: userRole, userId } = req.user;
@@ -1313,7 +1318,7 @@ app.put('/api/orders/:cnr/:seq/publish', requireRole(['Judge']), async (req, res
 // ==============================================================
 // 7. TABLE 4: WITNESSES & SUMMONS (R12 & R13)
 // ==============================================================
-app.get('/api/witnesses', async (req, res) => {
+app.get('/api/witnesses', requireRole(ALL_ROLES), async (req, res) => {
     try {
         const { search, limit } = req.query;
         const { role: userRole } = req.user;
@@ -1392,7 +1397,7 @@ app.post('/api/witnesses', requireRole(['Clerk']), async (req, res) => {
 // ==============================================================
 
 // READ DOCUMENTS (Shared access across all advocates retained on case) (N14)
-app.get('/api/documents', async (req, res) => {
+app.get('/api/documents', requireRole(ALL_ROLES), async (req, res) => {
     try {
         const { role: userRole, userId } = req.user;
         const { cnr, type, limit } = req.query;
@@ -1503,7 +1508,7 @@ app.post('/api/documents', requireRole(['Advocate', 'Clerk']), async (req, res) 
 // ==============================================================
 // 9. TABLE 6: VAKALATNAMA AUTHORIZATIONS (R16)
 // ==============================================================
-app.get('/api/vakalatnamas', async (req, res) => {
+app.get('/api/vakalatnamas', requireRole(ALL_ROLES), async (req, res) => {
     try {
         const { role: userRole, userId } = req.user;
 
@@ -1702,7 +1707,7 @@ app.post('/api/case-parties', requireRole(['Clerk']), async (req, res) => {
 // ==============================================================
 
 // GET USER NOTIFICATIONS
-app.get('/api/alerts', async (req, res) => {
+app.get('/api/alerts', requireRole(ALL_ROLES), async (req, res) => {
     try {
         const { userId } = req.user;
         if (!userId) {
@@ -1810,6 +1815,125 @@ app.get('/api/system/health', requireRole(['Court Administrator']), async (req, 
         res.status(500).json({ success: false, error: 'Database audit failed.' });
     }
 });
+
+
+// ==============================================================
+// 12B. PENDENCY ANALYTICS & AUDIT LOG CONTROLLERS (REQ-02, REQ-03)
+// ==============================================================
+
+// PENDENCY REPORT BY CASE TYPE (REQ-02 & Reporting)
+app.get('/api/reports/pendency', requireRole(ALL_ROLES), async (req, res) => {
+    try {
+        const sql = `
+            SELECT 
+                case_type, 
+                COUNT(*)::int AS total_cases, 
+                ROUND(AVG(CURRENT_DATE - filing_date), 1)::float AS avg_pendency_days,
+                MIN(filing_date) AS oldest_filing_date
+            FROM court_case 
+            WHERE case_status <> 'Disposed' 
+            GROUP BY case_type 
+            ORDER BY case_type ASC;
+        `;
+        const result = await query(sql);
+        res.json({
+            success: true,
+            rowCount: result.rowCount,
+            data: result.rows
+        });
+    } catch (err) {
+        console.error('[PENDENCY REPORT ERROR]', err.message);
+        res.status(500).json({ success: false, error: 'Failed to generate pendency analytics.' });
+    }
+});
+
+// SYSTEM AUDIT TRAIL QUERY (Restricted to Court Administrator per SRS Matrix)
+app.get('/api/audit', requireRole(['Court Administrator']), async (req, res) => {
+    try {
+        const sql = `
+            SELECT audit_id, table_name, action, record_key, changed_at
+            FROM audit_log
+            ORDER BY audit_id DESC
+            LIMIT 100;
+        `;
+        const result = await query(sql);
+        res.json({
+            success: true,
+            rowCount: result.rowCount,
+            data: result.rows
+        });
+    } catch (err) {
+        console.error('[AUDIT LOG ERROR]', err.message);
+        res.status(500).json({ success: false, error: 'Failed to retrieve system audit log.' });
+    }
+});
+
+// Ensure Schema Extensions: filing_date, case_type, audit_log, and triggers
+async function ensureSchemaExtensions() {
+    try {
+        await pool.query(`
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'court_case' AND column_name = 'filing_date'
+                ) THEN
+                    ALTER TABLE court_case ADD COLUMN filing_date DATE NOT NULL DEFAULT CURRENT_DATE;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'court_case' AND column_name = 'case_type'
+                ) THEN
+                    ALTER TABLE court_case ADD COLUMN case_type VARCHAR(10) NOT NULL DEFAULT 'Civil';
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.constraint_column_usage 
+                    WHERE table_name = 'court_case' AND constraint_name = 'ck_case_type'
+                ) THEN
+                    ALTER TABLE court_case ADD CONSTRAINT ck_case_type CHECK (case_type IN ('Civil','Criminal','Family','Other'));
+                END IF;
+
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    audit_id SERIAL PRIMARY KEY,
+                    table_name TEXT,
+                    action TEXT,
+                    record_key TEXT,
+                    changed_at TIMESTAMP DEFAULT NOW()
+                );
+
+                CREATE OR REPLACE FUNCTION fn_audit() RETURNS trigger AS $fn$
+                BEGIN
+                    INSERT INTO audit_log(table_name, action, record_key)
+                    VALUES (TG_TABLE_NAME, TG_OP, COALESCE(NEW.cnr, OLD.cnr));
+                    RETURN COALESCE(NEW, OLD);
+                END;
+                $fn$ LANGUAGE plpgsql;
+
+                DROP TRIGGER IF EXISTS trg_audit_case ON court_case;
+                CREATE TRIGGER trg_audit_case AFTER INSERT OR UPDATE OR DELETE ON court_case
+                    FOR EACH ROW EXECUTE FUNCTION fn_audit();
+
+                DROP TRIGGER IF EXISTS trg_audit_hearing ON hearing;
+                CREATE TRIGGER trg_audit_hearing AFTER INSERT OR UPDATE OR DELETE ON hearing
+                    FOR EACH ROW EXECUTE FUNCTION fn_audit();
+
+                DROP TRIGGER IF EXISTS trg_audit_order ON court_order;
+                CREATE TRIGGER trg_audit_order AFTER INSERT OR UPDATE OR DELETE ON court_order
+                    FOR EACH ROW EXECUTE FUNCTION fn_audit();
+
+                DROP TRIGGER IF EXISTS trg_audit_document ON document;
+                CREATE TRIGGER trg_audit_document AFTER INSERT OR UPDATE OR DELETE ON document
+                    FOR EACH ROW EXECUTE FUNCTION fn_audit();
+            END $$;
+        `);
+        console.log('[SCHEMA] Verified filing_date, case_type, audit_log, and triggers.');
+    } catch (err) {
+        console.error('[SCHEMA EXT ERROR]', err.message);
+    }
+}
+ensureSchemaExtensions();
 
 const PORT = process.env.PORT || 3000;
 if (require.main === module) {

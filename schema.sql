@@ -96,12 +96,15 @@ CREATE TABLE court_case (
     fir_number VARCHAR(20),
     statutory_urgency VARCHAR(10) NOT NULL DEFAULT 'Normal',
     case_status VARCHAR(10) NOT NULL DEFAULT 'Filed',
+    filing_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    case_type VARCHAR(10) NOT NULL DEFAULT 'Civil',
     registered_by_clerk_id INTEGER NOT NULL,
     CONSTRAINT fk_case_clerk FOREIGN KEY (registered_by_clerk_id) 
         REFERENCES clerk(user_id) ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT ck_case_cnr CHECK (cnr ~ '^[A-Z]{4}[0-9]{12}$'),
     CONSTRAINT ck_case_urgency CHECK (statutory_urgency IN ('Normal', 'Urgent', 'Statutory')),
-    CONSTRAINT ck_case_status CHECK (case_status IN ('Filed', 'Pending', 'Disposed'))
+    CONSTRAINT ck_case_status CHECK (case_status IN ('Filed', 'Pending', 'Disposed')),
+    CONSTRAINT ck_case_type CHECK (case_type IN ('Civil', 'Criminal', 'Family', 'Other'))
 );
 
 -- =====================================================================
@@ -371,3 +374,40 @@ SELECT o.cnr, o.order_seq_no, o.order_type, o.draft_timestamp, o.published_date,
        CASE WHEN o.published_date IS NOT NULL THEN 'Published' ELSE 'Draft' END AS publish_status,
        o.judge_id, o.hearing_seq_no
 FROM court_order o;
+
+
+-- =====================================================================
+-- AUDIT TRAIL LOGGING (REQ-03, Clerk Trust & RBAC Accountability)
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    audit_id SERIAL PRIMARY KEY,
+    table_name TEXT NOT NULL,
+    action TEXT NOT NULL,
+    record_key TEXT NOT NULL,
+    changed_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE OR REPLACE FUNCTION fn_audit() RETURNS trigger AS 
+BEGIN
+    INSERT INTO audit_log(table_name, action, record_key)
+    VALUES (TG_TABLE_NAME, TG_OP, COALESCE(NEW.cnr, OLD.cnr));
+    RETURN COALESCE(NEW, OLD);
+END;
+ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_audit_case ON court_case;
+CREATE TRIGGER trg_audit_case AFTER INSERT OR UPDATE OR DELETE ON court_case
+    FOR EACH ROW EXECUTE FUNCTION fn_audit();
+
+DROP TRIGGER IF EXISTS trg_audit_hearing ON hearing;
+CREATE TRIGGER trg_audit_hearing AFTER INSERT OR UPDATE OR DELETE ON hearing
+    FOR EACH ROW EXECUTE FUNCTION fn_audit();
+
+DROP TRIGGER IF EXISTS trg_audit_order ON court_order;
+CREATE TRIGGER trg_audit_order AFTER INSERT OR UPDATE OR DELETE ON court_order
+    FOR EACH ROW EXECUTE FUNCTION fn_audit();
+
+DROP TRIGGER IF EXISTS trg_audit_document ON document;
+CREATE TRIGGER trg_audit_document AFTER INSERT OR UPDATE OR DELETE ON document
+    FOR EACH ROW EXECUTE FUNCTION fn_audit();

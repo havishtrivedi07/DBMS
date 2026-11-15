@@ -81,13 +81,15 @@ WHERE user_id BETWEEN 402 AND 500; -- Admin 401 is root administrator (NULL)
 -- 7. R7: COURT_CASE (100 cases: 65 Pending, 10 Filed, 25 to be Disposed)
 -- ---------------------------------------------------------------------
 INSERT INTO court_case (cnr, standardized_filing_number, case_number, fir_number,
-                        statutory_urgency, case_status, registered_by_clerk_id)
+                        statutory_urgency, case_status, filing_date, case_type, registered_by_clerk_id)
 SELECT fn_cnr(n),
     'SFN-' || (2023 + n % 4) || '-' || lpad(n::text, 6, '0'),
     'CC/' || n || '/' || (2023 + n % 4),
     CASE WHEN n % 3 = 0 THEN 'FIR/' || lpad(n::text, 4, '0') || '/' || (2023 + n % 4) END,
     CASE WHEN n % 10 = 0 THEN 'Statutory' WHEN n % 7 = 0 THEN 'Urgent' ELSE 'Normal' END,
     CASE WHEN n % 10 = 1 THEN 'Filed' ELSE 'Pending' END,
+    CURRENT_DATE - ((n * 4) || ' days')::interval,
+    CASE (n % 4) WHEN 0 THEN 'Civil' WHEN 1 THEN 'Criminal' WHEN 2 THEN 'Family' ELSE 'Other' END,
     300 + n
 FROM generate_series(1, 100) AS n;
 

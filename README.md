@@ -42,6 +42,9 @@
 | **🛑 Irreversible Case Disposal Guard** | Clerks cannot manually alter case status to `Disposed`. Case disposal is an exclusive judicial act triggered automatically upon the Judge publishing a `Final Judgment`. Once disposed, case records are permanently sealed. |
 | **🔍 Multi-Parameter Subquery Search (REQ-02)** | Search bar matches across Case No, CNR, Filing No, FIR Number, Litigant Party Name (`case_party` + `system_users`), and Retained Advocate Name (`case_advocate` + `system_users`). |
 | **📜 Lead Advocate Retainer Check (R9 Trigger)** | Verifies caller is actively enrolled as `Lead` Counsel on record before allowing assignment of associate advocates (`fn_check_assigner_is_lead`). |
+| **🔐 Zero-Trust Cryptographic RBAC (REQ-03, P1)** | Header-only role spoofing completely closed; ONLY valid HMAC-SHA256 signed session tokens grant access; all read routes enforced by `requireRole(ALL_ROLES)`. |
+| **📊 Matter Classification & Pendency Analytics (REQ-02)** | `court_case` enriched with `case_type` ('Civil', 'Criminal', 'Family', 'Other') and `filing_date`; dynamic pendency metrics via `/api/reports/pendency`. |
+| **📝 Automated Trigger Audit Trail (REQ-03)** | Database `audit_log` table tracking every `INSERT`, `UPDATE`, `DELETE` across cases, hearings, orders, and documents via PL/pgSQL trigger `fn_audit()`. |
 
 ---
 

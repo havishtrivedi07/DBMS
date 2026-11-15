@@ -160,6 +160,13 @@
                             <option value="Pending">Pending</option>
                             <option value="Disposed">Disposed</option>
                         </select>
+                        <select id="caseFilterType" class="form-select">
+                            <option value="ALL">All Case Types</option>
+                            <option value="Civil">Civil</option>
+                            <option value="Criminal">Criminal</option>
+                            <option value="Family">Family</option>
+                            <option value="Other">Other</option>
+                        </select>
                         <button class="btn-link" id="btnClearCaseFilters" onclick="clearCaseFilters()">Clear filters</button>
                     </div>
                     <div class="toolbar-right">
@@ -182,6 +189,8 @@
                                 <th>Case No. (CNR)</th>
                                 <th>Filing No.</th>
                                 <th>Case Number</th>
+                                <th>Type</th>
+                                <th>Filing Date</th>
                                 <th>FIR Reference</th>
                                 <th>Urgency</th>
                                 <th>Status</th>
@@ -190,7 +199,7 @@
                             </tr>
                         </thead>
                         <tbody id="caseTableBody">
-                            <tr><td colspan="8" class="table-loading">Loading court cases...</td></tr>
+                            <tr><td colspan="10" class="table-loading">Loading court cases...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -508,6 +517,33 @@
                         </tbody>
                     </table>
                 </div>
+
+                <div class="table-toolbar mt-4">
+                    <div class="toolbar-left">
+                        <span style="font-weight:600; font-size:14px; color:var(--primary);">System Audit Trail Ledger (Live Database Triggers)</span>
+                        <span class="text-muted" style="font-size:13px;">— Real-time tracking of INSERT, UPDATE, DELETE actions</span>
+                    </div>
+                    <div class="toolbar-right">
+                        <button class="btn btn-secondary btn-sm" onclick="loadAuditLogs()">Refresh Audit Trail</button>
+                    </div>
+                </div>
+
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Audit ID</th>
+                                <th>Table Name</th>
+                                <th>Action Executed</th>
+                                <th>Record Reference (CNR)</th>
+                                <th>Timestamp</th>
+                            </tr>
+                        </thead>
+                        <tbody id="auditLogTableBody">
+                            <tr><td colspan="5" class="table-loading">Loading audit records...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </section>
 
@@ -702,6 +738,22 @@
                         <div class="form-group">
                             <label class="form-label" for="fir_in">FIR Reference</label>
                             <input type="text" id="fir_in" class="form-input" value="FIR/0099/2026" placeholder="Leave blank if civil matter" />
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label" for="type_in">Matter Classification (Case Type) <span class="required">*</span></label>
+                            <select id="type_in" class="form-select w-100">
+                                <option value="Civil" selected>Civil</option>
+                                <option value="Criminal">Criminal</option>
+                                <option value="Family">Family</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="filing_date_in">Filing Registration Date <span class="required">*</span></label>
+                            <input type="date" id="filing_date_in" class="form-input" required />
                         </div>
                     </div>
 

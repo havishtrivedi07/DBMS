@@ -36,7 +36,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const res = await fetch('/api/auth/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ identifier: 301, password: 'Court@2026' })
+                body: JSON.stringify({ identifier: 301, password: '301' })
             });
             const json = await res.json();
             if (json.success && json.token) {
@@ -207,7 +207,7 @@ function switchTab(targetId) {
     else if (targetId === 'tab-documents') loadDocuments();
     else if (targetId === 'tab-vakalatnama') loadVakalatnamas();
     else if (targetId === 'tab-admin') loadSystemUsers();
-    else if (targetId === 'tab-audit') loadSystemHealth();
+    else if (targetId === 'tab-audit') { loadSystemHealth(); loadAuditLogs(); }
 }
 
 function setupEventListeners() {
@@ -224,6 +224,13 @@ function setupEventListeners() {
         currentPage = 1;
         loadCases();
     });
+    const typeFilterEl = document.getElementById('caseFilterType');
+    if (typeFilterEl) {
+        typeFilterEl.addEventListener('change', () => {
+            currentPage = 1;
+            loadCases();
+        });
+    }
 
     // Hearing Schedule Filters
     document.getElementById('hearingSearchInput').addEventListener('input', debounce(loadHearings, 250));
@@ -292,7 +299,7 @@ async function loginPresetUser(userId, expectedRole) {
         const res = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ identifier: userId, password: 'Court@2026' })
+            body: JSON.stringify({ identifier: userId, password: String(userId) })
         });
         const json = await res.json();
         if (!json.success) throw new Error(json.error);
@@ -515,6 +522,7 @@ async function loadCases() {
     const search = document.getElementById('caseSearchInput').value.trim();
     const urgency = document.getElementById('caseFilterUrgency').value;
     const status = document.getElementById('caseFilterStatus').value;
+    const caseType = document.getElementById('caseFilterType')?.value || 'ALL';
 
     countLabel.innerText = 'Loading cases...';
 
@@ -523,6 +531,7 @@ async function loadCases() {
         if (search) params.append('search', search);
         if (urgency !== 'ALL') params.append('urgency', urgency);
         if (status !== 'ALL') params.append('status', status);
+        if (caseType !== 'ALL') params.append('case_type', caseType);
         params.append('limit', '500');
 
         const res = await fetch(`/api/cases?${params.toString()}`, { headers: getAuthHeaders() });
@@ -532,7 +541,7 @@ async function loadCases() {
         allCases = json.data;
         renderPaginatedCases();
     } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="8" class="table-loading text-danger">Error: ${escapeHtml(err.message)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="10" class="table-loading text-danger">Error: ${escapeHtml(err.message)}</td></tr>`;
         countLabel.innerText = 'Unable to fetch cases';
         showToast(err.message, 'danger');
     }
@@ -557,7 +566,7 @@ function renderPaginatedCases() {
     if (totalRecords === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="8">
+                <td colspan="10">
                     <div class="table-empty-box">
                         <p>No court cases match the active role filters.</p>
                         <button class="btn btn-secondary btn-sm" onclick="clearCaseFilters()">Clear filters</button>
@@ -610,6 +619,9 @@ function renderPaginatedCases() {
             actionButtons += `<button class="btn btn-sm btn-danger-outline" onclick="openDeleteModal('${escapeHtml(c.cnr)}')">Delete</button>`;
         }
 
+        const formattedFilingDate = c.filing_date ? formatDate(c.filing_date) : '-';
+        const typeBadge = `<span class="status-badge badge-filed" style="font-size:11.5px; font-weight:600;">${escapeHtml(c.case_type || 'Civil')}</span>`;
+
         tr.innerHTML = `
             <td>
                 <a class="case-cnr-link font-mono" onclick="viewDossier('${escapeHtml(c.cnr)}')">
@@ -618,6 +630,8 @@ function renderPaginatedCases() {
             </td>
             <td>${escapeHtml(c.standardized_filing_number)}</td>
             <td>${escapeHtml(c.case_number)}</td>
+            <td>${typeBadge}</td>
+            <td style="font-size:12px; color:var(--text-muted);">${formattedFilingDate}</td>
             <td>${c.fir_number ? escapeHtml(c.fir_number) : '<span class="text-muted">—</span>'}</td>
             <td>${urgencyBadge}</td>
             <td>${statusBadge}</td>
@@ -681,6 +695,8 @@ function clearCaseFilters() {
     document.getElementById('caseSearchInput').value = '';
     document.getElementById('caseFilterUrgency').value = 'ALL';
     document.getElementById('caseFilterStatus').value = 'ALL';
+    const typeEl = document.getElementById('caseFilterType');
+    if (typeEl) typeEl.value = 'ALL';
     currentPage = 1;
     loadCases();
 }
@@ -699,7 +715,9 @@ async function handleCreateCase(e) {
         fir_no: document.getElementById('fir_in').value.trim(),
         urgency: document.getElementById('urgency_in').value,
         status: document.getElementById('status_in').value,
-        clerk_id: document.getElementById('clerk_in').value
+        clerk_id: document.getElementById('clerk_in').value,
+        case_type: document.getElementById('type_in')?.value || 'Civil',
+        filing_date: document.getElementById('filing_date_in')?.value || new Date().toISOString().slice(0, 10)
     };
 
     try {
@@ -1155,7 +1173,7 @@ async function loadHearings() {
         renderHearingsTable(json.data);
         countLabel.innerText = `Showing ${json.rowCount} hearings`;
     } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="8" class="table-loading text-danger">Error: ${escapeHtml(err.message)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="10" class="table-loading text-danger">Error: ${escapeHtml(err.message)}</td></tr>`;
         countLabel.innerText = 'Failed to load hearings';
     }
 }
@@ -1370,7 +1388,7 @@ async function loadOrders() {
         renderOrdersTable(json.data);
         countLabel.innerText = `Showing ${json.rowCount} orders`;
     } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="8" class="table-loading text-danger">Error: ${escapeHtml(err.message)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="10" class="table-loading text-danger">Error: ${escapeHtml(err.message)}</td></tr>`;
         countLabel.innerText = 'Failed to load orders';
     }
 }

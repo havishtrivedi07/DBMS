@@ -388,13 +388,13 @@ CREATE TABLE IF NOT EXISTS audit_log (
     changed_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE OR REPLACE FUNCTION fn_audit() RETURNS trigger AS 
+CREATE OR REPLACE FUNCTION fn_audit() RETURNS trigger AS $$
 BEGIN
     INSERT INTO audit_log(table_name, action, record_key)
     VALUES (TG_TABLE_NAME, TG_OP, COALESCE(NEW.cnr, OLD.cnr));
     RETURN COALESCE(NEW, OLD);
 END;
- LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trg_audit_case ON court_case;
 CREATE TRIGGER trg_audit_case AFTER INSERT OR UPDATE OR DELETE ON court_case

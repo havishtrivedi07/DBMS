@@ -1768,6 +1768,28 @@ async function loadSystemHealth() {
     }
 }
 
+
+async function loadAuditLogs() {
+    const tbody = document.getElementById('auditLogTableBody');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="5" class="table-loading">Loading audit records...</td></tr>';
+    try {
+        const res = await fetch('/api/audit', { headers: getAuthHeaders() });
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error);
+        tbody.innerHTML = (json.data || []).map(a => `
+            <tr>
+                <td class="font-mono">#${a.audit_id}</td>
+                <td><code>${escapeHtml(a.table_name)}</code></td>
+                <td><span class="status-badge ${a.action === 'INSERT' ? 'badge-published' : (a.action === 'UPDATE' ? 'badge-pending' : 'badge-disposed')}">${escapeHtml(a.action)}</span></td>
+                <td class="font-mono font-bold">${escapeHtml(a.record_key || '-')}</td>
+                <td>${new Date(a.changed_at).toLocaleString()}</td>
+            </tr>`).join('') || '<tr><td colspan="5" class="table-loading">No audit entries yet.</td></tr>';
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="5" class="table-loading text-danger">${escapeHtml(err.message)}</td></tr>`;
+    }
+}
+
 // ==============================================================
 // 13. MODAL & TOAST HELPERS
 // ==============================================================
